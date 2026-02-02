@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useLocalStorage } from './useLocalStorage';
-import type { Transaction, StockTrade, PortfolioHolding, PriceHistory } from '../types';
+import type { Transaction, StockTrade, PortfolioHolding, PriceHistory, Asset, Loan, Installment } from '../types';
 import { sheetsService } from '../services/googleSheets';
 import { yahooFinanceService } from '../services/yahooFinance';
 
@@ -18,6 +18,9 @@ export function useFinanceData() {
   const [stockTrades, setStockTrades] = useLocalStorage<StockTrade[]>('stockTrades', []);
   const [portfolio, setPortfolio] = useLocalStorage<PortfolioHolding[]>('portfolio', []);
   const [priceHistory, setPriceHistory] = useLocalStorage<PriceHistory[]>('priceHistory', []);
+  const [assets, setAssets] = useLocalStorage<Asset[]>('assets', []);
+  const [loans, setLoans] = useLocalStorage<Loan[]>('loans', []);
+  const [installments, setInstallments] = useLocalStorage<Installment[]>('installments', []);
 
   // Google Sheets config
   const [sheetsConfig, setSheetsConfig] = useLocalStorage('sheetsConfig', {
@@ -52,7 +55,7 @@ export function useFinanceData() {
   }, []);
 
   // Transaction operations
-  const addTransaction = useCallback(async (transaction: Omit<Transaction, 'id'>) => {
+  const addTransaction = useCallback(async (transaction: Omit<Transaction, 'id'> & { installmentId?: string }) => {
     setIsLoading(true);
     setError(null);
     try {
@@ -258,6 +261,119 @@ export function useFinanceData() {
     return portfolio.filter((h) => h.dropFromHigh <= threshold);
   }, [portfolio]);
 
+  // Asset operations
+  const addAsset = useCallback((asset: Omit<Asset, 'id' | 'updatedAt'>) => {
+    const newAsset: Asset = {
+      ...asset,
+      id: generateId(),
+      updatedAt: new Date().toISOString().split('T')[0],
+    };
+    setAssets((prev) => [...prev, newAsset]);
+    return true;
+  }, [setAssets]);
+
+  const updateAsset = useCallback((id: string, updates: Partial<Asset>) => {
+    setAssets((prev) =>
+      prev.map((a) =>
+        a.id === id ? { ...a, ...updates, updatedAt: new Date().toISOString().split('T')[0] } : a
+      )
+    );
+  }, [setAssets]);
+
+  const deleteAsset = useCallback((id: string) => {
+    setAssets((prev) => prev.filter((a) => a.id !== id));
+  }, [setAssets]);
+
+  // Loan operations
+  const addLoan = useCallback((loan: Omit<Loan, 'id'>) => {
+    const newLoan: Loan = { ...loan, id: generateId() };
+    setLoans((prev) => [...prev, newLoan]);
+    return true;
+  }, [setLoans]);
+
+  const updateLoan = useCallback((id: string, updates: Partial<Loan>) => {
+    setLoans((prev) => prev.map((l) => (l.id === id ? { ...l, ...updates } : l)));
+  }, [setLoans]);
+
+  const deleteLoan = useCallback((id: string) => {
+    setLoans((prev) => prev.filter((l) => l.id !== id));
+  }, [setLoans]);
+
+  // Installment operations
+  const addInstallment = useCallback(async (
+    installment: Omit<Installment, 'id' | 'paidMonths'>,
+    addToTransaction: boolean = true
+  ) => {
+    const newInstallment: Installment = {
+      ...installment,
+      id: generateId(),
+      paidMonths: 1, // 첫 결제 완료
+    };
+    setInstallments((prev) => [...prev, newInstallment]);
+
+    // 첫 결제를 가계부에 추가
+    if (addToTransaction) {
+      await addTransaction({
+        date: installment.startDate,
+        type: 'expense',
+        category: '할부',
+        amount: installment.monthlyAmount,
+        memo: `${installment.itemName} (1/${installment.totalMonths}회) - ${installment.cardName}`,
+        installmentId: newInstallment.id,
+      });
+    }
+    return true;
+  }, [setInstallments, addTransaction]);
+
+  const updateInstallment = useCallback((id: string, updates: Partial<Installment>) => {
+    setInstallments((prev) => prev.map((i) => (i.id === id ? { ...i, ...updates } : i)));
+  }, [setInstallments]);
+
+  const deleteInstallment = useCallback((id: string) => {
+    setInstallments((prev) => prev.filter((i) => i.id !== id));
+  }, [setInstallments]);
+
+  // 이번 달 결제 예정 할부 목록 (결제 당일 제외)
+  const getUpcomingInstallments = useCallback(() => {
+    const today = new Date();
+    const currentDay = today.getDate();
+
+    return installments
+      .filter((inst) => {
+        // 완납된 할부 제외
+        if (inst.paidMonths >= inst.totalMonths) return false;
+        // 결제 당일 제외
+        if (inst.paymentDay === currentDay) return false;
+        return true;
+      })
+      .map((inst) => ({
+        ...inst,
+        nextPaymentNumber: inst.paidMonths + 1,
+        remainingMonths: inst.totalMonths - inst.paidMonths,
+        remainingAmount: (inst.totalMonths - inst.paidMonths) * inst.monthlyAmount,
+      }));
+  }, [installments]);
+
+  // 이번 달 총 할부금
+  const getMonthlyInstallmentTotal = useCallback(() => {
+    return installments
+      .filter((inst) => inst.paidMonths < inst.totalMonths)
+      .reduce((sum, inst) => sum + inst.monthlyAmount, 0);
+  }, [installments]);
+
+  // 총 자산 계산 (자산 - 대출)
+  const getTotalNetWorth = useCallback(() => {
+    const totalAssets = assets.reduce((sum, a) => sum + a.amount, 0);
+    const totalInvestment = portfolio.reduce((sum, h) => sum + h.currentPrice * h.quantity, 0);
+    const totalLoans = loans.reduce((sum, l) => sum + l.remainingBalance, 0);
+    return {
+      totalAssets,
+      totalInvestment,
+      totalLoans,
+      netWorth: totalAssets + totalInvestment - totalLoans,
+    };
+  }, [assets, portfolio, loans]);
+
   // Summary calculations
   const getSummary = useCallback(() => {
     const now = new Date();
@@ -313,6 +429,9 @@ export function useFinanceData() {
     stockTrades,
     portfolio,
     priceHistory,
+    assets,
+    loans,
+    installments,
     sheetsConfig,
 
     // Setters
@@ -330,5 +449,20 @@ export function useFinanceData() {
     syncWithSheets,
     getDropAlerts,
     getSummary,
+    // Asset operations
+    addAsset,
+    updateAsset,
+    deleteAsset,
+    // Loan operations
+    addLoan,
+    updateLoan,
+    deleteLoan,
+    // Installment operations
+    addInstallment,
+    updateInstallment,
+    deleteInstallment,
+    getUpcomingInstallments,
+    getMonthlyInstallmentTotal,
+    getTotalNetWorth,
   };
 }

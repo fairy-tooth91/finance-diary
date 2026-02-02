@@ -9,6 +9,7 @@ interface LayoutProps {
 const navItems = [
   { path: '/', label: '대시보드', icon: '📊' },
   { path: '/transactions', label: '가계부', icon: '💰' },
+  { path: '/assets', label: '자산', icon: '🏦' },
   { path: '/stocks', label: '주식매매', icon: '📈' },
   { path: '/portfolio', label: '포트폴리오', icon: '💼' },
   { path: '/settings', label: '설정', icon: '⚙️' },

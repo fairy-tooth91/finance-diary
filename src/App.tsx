@@ -3,6 +3,7 @@ import { FinanceProvider } from './context/FinanceContext';
 import { Layout } from './components/common/Layout';
 import { Dashboard } from './pages/Dashboard';
 import { Transactions } from './pages/Transactions';
+import { Assets } from './pages/Assets';
 import { Stocks } from './pages/Stocks';
 import { Portfolio } from './pages/Portfolio';
 import { Settings } from './pages/Settings';
@@ -15,6 +16,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/transactions" element={<Transactions />} />
+            <Route path="/assets" element={<Assets />} />
             <Route path="/stocks" element={<Stocks />} />
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/settings" element={<Settings />} />
