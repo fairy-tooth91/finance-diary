@@ -1,134 +1,137 @@
-import { useState, useCallback } from 'react';
-import { useLocalStorage } from './useLocalStorage';
-import type { Transaction, StockTrade, PortfolioHolding, PriceHistory, Asset, Loan, Installment } from '../types';
-import { sheetsService } from '../services/googleSheets';
+import { useState, useCallback, useEffect } from 'react';
+import type { Transaction, StockTrade, PortfolioHolding, PriceHistory, Asset, Loan, Installment, Card } from '../types';
+import { supabaseService } from '../services/supabase';
 import { yahooFinanceService } from '../services/yahooFinance';
 
 // Generate unique ID
 const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
 export function useFinanceData() {
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [useSheetsApi, setUseSheetsApi] = useLocalStorage('useSheetsApi', false);
-  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
 
-  // Local storage data
-  const [transactions, setTransactions] = useLocalStorage<Transaction[]>('transactions', []);
-  const [stockTrades, setStockTrades] = useLocalStorage<StockTrade[]>('stockTrades', []);
-  const [portfolio, setPortfolio] = useLocalStorage<PortfolioHolding[]>('portfolio', []);
-  const [priceHistory, setPriceHistory] = useLocalStorage<PriceHistory[]>('priceHistory', []);
-  const [assets, setAssets] = useLocalStorage<Asset[]>('assets', []);
-  const [loans, setLoans] = useLocalStorage<Loan[]>('loans', []);
-  const [installments, setInstallments] = useLocalStorage<Installment[]>('installments', []);
+  // State - fetched from Supabase on mount
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [stockTrades, setStockTrades] = useState<StockTrade[]>([]);
+  const [portfolio, setPortfolio] = useState<PortfolioHolding[]>([]);
+  const [priceHistory, setPriceHistory] = useState<PriceHistory[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [installments, setInstallments] = useState<Installment[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
 
-  // Google Sheets config
-  const [sheetsConfig, setSheetsConfig] = useLocalStorage('sheetsConfig', {
-    spreadsheetId: '',
-    apiKey: '',
-    clientId: '',
-  });
-
-  // Initialize Google Sheets
-  const initializeSheets = useCallback(async () => {
-    if (!sheetsConfig.spreadsheetId || !sheetsConfig.apiKey || !sheetsConfig.clientId) {
-      return false;
-    }
-    sheetsService.setConfig(
-      sheetsConfig.spreadsheetId,
-      sheetsConfig.apiKey,
-      sheetsConfig.clientId
-    );
-    sheetsService.setAuthChangeCallback(setIsAuthorized);
-    return await sheetsService.initialize();
-  }, [sheetsConfig]);
-
-  const authorizeSheets = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const success = await sheetsService.authorize();
-      setIsAuthorized(success);
-      return success;
-    } finally {
-      setIsLoading(false);
-    }
+  // Fetch all data from Supabase on mount
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const [txns, trades, port, prices, assts, lns, insts, crds] = await Promise.all([
+          supabaseService.getTransactions(),
+          supabaseService.getStockTrades(),
+          supabaseService.getPortfolio(),
+          supabaseService.getPriceHistory(),
+          supabaseService.getAssets(),
+          supabaseService.getLoans(),
+          supabaseService.getInstallments(),
+          supabaseService.getCards(),
+        ]);
+        setTransactions(txns);
+        setStockTrades(trades);
+        setPortfolio(port);
+        setPriceHistory(prices);
+        setAssets(assts);
+        setLoans(lns);
+        setInstallments(insts);
+        setCards(crds);
+        setIsConnected(true);
+      } catch (err) {
+        console.error('Failed to load data from Supabase:', err);
+        setError('데이터 로딩에 실패했습니다. 인터넷 연결을 확인하세요.');
+        setIsConnected(false);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadData();
   }, []);
 
   // Transaction operations
   const addTransaction = useCallback(async (transaction: Omit<Transaction, 'id'> & { installmentId?: string }) => {
-    setIsLoading(true);
     setError(null);
     try {
-      if (useSheetsApi && isAuthorized) {
-        await sheetsService.addTransaction(transaction);
-      }
-      const newTransaction = { ...transaction, id: generateId() };
+      const newTransaction: Transaction = { ...transaction, id: generateId() };
       setTransactions((prev) => [...prev, newTransaction]);
+      await supabaseService.addTransaction(newTransaction);
       return true;
     } catch (err) {
-      setError('Failed to add transaction');
+      console.error('Failed to add transaction:', err);
+      setError('거래 추가에 실패했습니다.');
       return false;
-    } finally {
-      setIsLoading(false);
     }
-  }, [useSheetsApi, isAuthorized, setTransactions]);
+  }, []);
 
-  const deleteTransaction = useCallback((id: string) => {
+  const deleteTransaction = useCallback(async (id: string) => {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
-  }, [setTransactions]);
+    try {
+      await supabaseService.deleteTransaction(id);
+    } catch (err) {
+      console.error('Failed to delete transaction:', err);
+    }
+  }, []);
 
   // Stock trade operations
   const addStockTrade = useCallback(async (trade: Omit<StockTrade, 'id' | 'total'>) => {
-    setIsLoading(true);
     setError(null);
     try {
       const total = trade.quantity * trade.price;
-      const fullTrade = { ...trade, total, id: generateId() };
+      const fullTrade: StockTrade = { ...trade, total, id: generateId() };
 
-      if (useSheetsApi && isAuthorized) {
-        await sheetsService.addStockTrade(fullTrade);
-      }
       setStockTrades((prev) => [...prev, fullTrade]);
+      await supabaseService.addStockTrade(fullTrade);
 
       // Update portfolio
       updatePortfolioFromTrade(fullTrade);
 
       return true;
     } catch (err) {
-      setError('Failed to add stock trade');
+      console.error('Failed to add stock trade:', err);
+      setError('주식 매매 추가에 실패했습니다.');
       return false;
-    } finally {
-      setIsLoading(false);
     }
-  }, [useSheetsApi, isAuthorized, setStockTrades]);
+  }, []);
 
-  const deleteStockTrade = useCallback((id: string) => {
+  const deleteStockTrade = useCallback(async (id: string) => {
     setStockTrades((prev) => prev.filter((t) => t.id !== id));
-  }, [setStockTrades]);
+    try {
+      await supabaseService.deleteStockTrade(id);
+    } catch (err) {
+      console.error('Failed to delete stock trade:', err);
+    }
+  }, []);
 
   // Portfolio operations
   const updatePortfolioFromTrade = useCallback((trade: StockTrade) => {
     setPortfolio((prev) => {
       const existingIndex = prev.findIndex((h) => h.stockCode === trade.stockCode);
+      let updated: PortfolioHolding[];
 
       if (trade.tradeType === 'buy') {
         if (existingIndex >= 0) {
-          // Update existing holding
           const existing = prev[existingIndex];
           const newQuantity = existing.quantity + trade.quantity;
           const newAvgPrice =
             (existing.avgPrice * existing.quantity + trade.price * trade.quantity) / newQuantity;
 
-          const updated = [...prev];
+          updated = [...prev];
           updated[existingIndex] = {
             ...existing,
             quantity: newQuantity,
             avgPrice: newAvgPrice,
           };
-          return updated;
         } else {
-          // Add new holding
-          return [
+          updated = [
             ...prev,
             {
               stockName: trade.stockName,
@@ -149,21 +152,27 @@ export function useFinanceData() {
           const newQuantity = existing.quantity - trade.quantity;
 
           if (newQuantity <= 0) {
-            // Remove holding
-            return prev.filter((_, i) => i !== existingIndex);
+            updated = prev.filter((_, i) => i !== existingIndex);
+            // Delete from Supabase
+            supabaseService.deletePortfolioHolding(trade.stockCode).catch(console.error);
+            return updated;
           } else {
-            const updated = [...prev];
+            updated = [...prev];
             updated[existingIndex] = {
               ...existing,
               quantity: newQuantity,
             };
-            return updated;
           }
+        } else {
+          return prev;
         }
-        return prev;
       }
+
+      // Sync updated portfolio to Supabase
+      supabaseService.upsertPortfolio(updated).catch(console.error);
+      return updated;
     });
-  }, [setPortfolio]);
+  }, []);
 
   // Refresh prices from Yahoo Finance
   const refreshPrices = useCallback(async () => {
@@ -179,23 +188,16 @@ export function useFinanceData() {
         if (quote) {
           holding.currentPrice = quote.regularMarketPrice;
 
-          // Get historical data for high watermark
           const historical = await yahooFinanceService.getHistoricalPrices(holding.stockCode, '3mo');
           const highWatermark = yahooFinanceService.calculateHighWatermark(historical);
 
-          // Update high price if current is higher
           holding.highPrice = Math.max(holding.highPrice, highWatermark, quote.regularMarketPrice);
-
-          // Calculate drop from high
           holding.dropFromHigh = yahooFinanceService.calculateDropFromHigh(
             holding.currentPrice,
             holding.highPrice
           );
-
-          // Calculate profit rate
           holding.profitRate = ((holding.currentPrice - holding.avgPrice) / holding.avgPrice) * 100;
 
-          // Add to price history
           newPriceHistory.push({
             date: today,
             stockCode: holding.stockCode,
@@ -208,53 +210,23 @@ export function useFinanceData() {
 
       if (newPriceHistory.length > 0) {
         setPriceHistory((prev) => {
-          // Remove today's entries and add new ones
           const filtered = prev.filter((p) => p.date !== today);
           return [...filtered, ...newPriceHistory];
         });
 
-        if (useSheetsApi && isAuthorized) {
-          await sheetsService.updatePortfolio(updatedPortfolio);
-          await sheetsService.addPriceHistory(newPriceHistory);
-        }
+        // Sync to Supabase
+        await supabaseService.upsertPortfolio(updatedPortfolio);
+        await supabaseService.addPriceHistory(newPriceHistory);
       }
 
       return true;
     } catch (err) {
-      setError('Failed to refresh prices');
+      setError('시세 갱신에 실패했습니다.');
       return false;
     } finally {
       setIsLoading(false);
     }
-  }, [portfolio, setPortfolio, setPriceHistory, useSheetsApi, isAuthorized]);
-
-  // Sync with Google Sheets
-  const syncWithSheets = useCallback(async () => {
-    if (!useSheetsApi || !isAuthorized) return false;
-
-    setIsLoading(true);
-    setError(null);
-    try {
-      const [sheetTransactions, sheetTrades, sheetPortfolio, sheetHistory] = await Promise.all([
-        sheetsService.getTransactions(),
-        sheetsService.getStockTrades(),
-        sheetsService.getPortfolio(),
-        sheetsService.getPriceHistory(),
-      ]);
-
-      setTransactions(sheetTransactions);
-      setStockTrades(sheetTrades);
-      setPortfolio(sheetPortfolio);
-      setPriceHistory(sheetHistory);
-
-      return true;
-    } catch (err) {
-      setError('Failed to sync with Google Sheets');
-      return false;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [useSheetsApi, isAuthorized, setTransactions, setStockTrades, setPortfolio, setPriceHistory]);
+  }, [portfolio]);
 
   // Get alerts for holdings dropping more than threshold
   const getDropAlerts = useCallback((threshold: number = -10) => {
@@ -262,87 +234,158 @@ export function useFinanceData() {
   }, [portfolio]);
 
   // Asset operations
-  const addAsset = useCallback((asset: Omit<Asset, 'id' | 'updatedAt'>) => {
+  const addAsset = useCallback(async (asset: Omit<Asset, 'id' | 'updatedAt'>) => {
     const newAsset: Asset = {
       ...asset,
       id: generateId(),
       updatedAt: new Date().toISOString().split('T')[0],
     };
     setAssets((prev) => [...prev, newAsset]);
+    try {
+      await supabaseService.addAsset(newAsset);
+    } catch (err) {
+      console.error('Failed to add asset:', err);
+    }
     return true;
-  }, [setAssets]);
+  }, []);
 
-  const updateAsset = useCallback((id: string, updates: Partial<Asset>) => {
+  const updateAsset = useCallback(async (id: string, updates: Partial<Asset>) => {
+    const updatesWithDate = { ...updates, updatedAt: new Date().toISOString().split('T')[0] };
     setAssets((prev) =>
-      prev.map((a) =>
-        a.id === id ? { ...a, ...updates, updatedAt: new Date().toISOString().split('T')[0] } : a
-      )
+      prev.map((a) => (a.id === id ? { ...a, ...updatesWithDate } : a))
     );
-  }, [setAssets]);
+    try {
+      await supabaseService.updateAsset(id, updatesWithDate);
+    } catch (err) {
+      console.error('Failed to update asset:', err);
+    }
+  }, []);
 
-  const deleteAsset = useCallback((id: string) => {
+  const deleteAsset = useCallback(async (id: string) => {
     setAssets((prev) => prev.filter((a) => a.id !== id));
-  }, [setAssets]);
+    try {
+      await supabaseService.deleteAsset(id);
+    } catch (err) {
+      console.error('Failed to delete asset:', err);
+    }
+  }, []);
 
   // Loan operations
-  const addLoan = useCallback((loan: Omit<Loan, 'id'>) => {
+  const addLoan = useCallback(async (loan: Omit<Loan, 'id'>) => {
     const newLoan: Loan = { ...loan, id: generateId() };
     setLoans((prev) => [...prev, newLoan]);
+    try {
+      await supabaseService.addLoan(newLoan);
+    } catch (err) {
+      console.error('Failed to add loan:', err);
+    }
     return true;
-  }, [setLoans]);
+  }, []);
 
-  const updateLoan = useCallback((id: string, updates: Partial<Loan>) => {
+  const updateLoan = useCallback(async (id: string, updates: Partial<Loan>) => {
     setLoans((prev) => prev.map((l) => (l.id === id ? { ...l, ...updates } : l)));
-  }, [setLoans]);
+    try {
+      await supabaseService.updateLoan(id, updates);
+    } catch (err) {
+      console.error('Failed to update loan:', err);
+    }
+  }, []);
 
-  const deleteLoan = useCallback((id: string) => {
+  const deleteLoan = useCallback(async (id: string) => {
     setLoans((prev) => prev.filter((l) => l.id !== id));
-  }, [setLoans]);
+    try {
+      await supabaseService.deleteLoan(id);
+    } catch (err) {
+      console.error('Failed to delete loan:', err);
+    }
+  }, []);
+
+  // Card operations
+  const addCard = useCallback(async (card: Omit<Card, 'id'>) => {
+    const newCard: Card = { ...card, id: generateId() };
+    setCards((prev) => [...prev, newCard]);
+    try {
+      await supabaseService.addCard(newCard);
+    } catch (err) {
+      console.error('Failed to add card:', err);
+    }
+    return newCard;
+  }, []);
+
+  const updateCard = useCallback(async (id: string, updates: Partial<Card>) => {
+    setCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
+    try {
+      await supabaseService.updateCard(id, updates);
+    } catch (err) {
+      console.error('Failed to update card:', err);
+    }
+  }, []);
+
+  const deleteCard = useCallback(async (id: string) => {
+    setCards((prev) => prev.filter((c) => c.id !== id));
+    try {
+      await supabaseService.deleteCard(id);
+    } catch (err) {
+      console.error('Failed to delete card:', err);
+    }
+  }, []);
 
   // Installment operations
   const addInstallment = useCallback(async (
-    installment: Omit<Installment, 'id' | 'paidMonths'>,
-    addToTransaction: boolean = true
+    installment: Omit<Installment, 'id' | 'paidMonths'>
   ) => {
     const newInstallment: Installment = {
       ...installment,
       id: generateId(),
-      paidMonths: 1, // 첫 결제 완료
+      paidMonths: 1,
     };
     setInstallments((prev) => [...prev, newInstallment]);
+    try {
+      await supabaseService.addInstallment(newInstallment);
+    } catch (err) {
+      console.error('Failed to add installment:', err);
+    }
 
     // 첫 결제를 가계부에 추가
-    if (addToTransaction) {
-      await addTransaction({
-        date: installment.startDate,
-        type: 'expense',
-        category: '할부',
-        amount: installment.monthlyAmount,
-        memo: `${installment.itemName} (1/${installment.totalMonths}회) - ${installment.cardName}`,
-        installmentId: newInstallment.id,
-      });
-    }
+    await addTransaction({
+      date: installment.startDate,
+      type: 'expense',
+      category: installment.category,
+      amount: installment.monthlyAmount,
+      memo: `${installment.itemName} (1/${installment.totalMonths}회) - ${installment.cardName}`,
+      paymentMethod: 'card',
+      cardId: installment.cardId,
+      installmentId: newInstallment.id,
+    });
     return true;
-  }, [setInstallments, addTransaction]);
+  }, [addTransaction]);
 
-  const updateInstallment = useCallback((id: string, updates: Partial<Installment>) => {
+  const updateInstallment = useCallback(async (id: string, updates: Partial<Installment>) => {
     setInstallments((prev) => prev.map((i) => (i.id === id ? { ...i, ...updates } : i)));
-  }, [setInstallments]);
+    try {
+      await supabaseService.updateInstallment(id, updates);
+    } catch (err) {
+      console.error('Failed to update installment:', err);
+    }
+  }, []);
 
-  const deleteInstallment = useCallback((id: string) => {
+  const deleteInstallment = useCallback(async (id: string) => {
     setInstallments((prev) => prev.filter((i) => i.id !== id));
-  }, [setInstallments]);
+    try {
+      await supabaseService.deleteInstallment(id);
+    } catch (err) {
+      console.error('Failed to delete installment:', err);
+    }
+  }, []);
 
-  // 이번 달 결제 예정 할부 목록 (결제 당일 제외)
+  // 이번 달 결제 예정 할부 목록
   const getUpcomingInstallments = useCallback(() => {
     const today = new Date();
     const currentDay = today.getDate();
 
     return installments
       .filter((inst) => {
-        // 완납된 할부 제외
         if (inst.paidMonths >= inst.totalMonths) return false;
-        // 결제 당일 제외
         if (inst.paymentDay === currentDay) return false;
         return true;
       })
@@ -354,6 +397,29 @@ export function useFinanceData() {
       }));
   }, [installments]);
 
+  // 특정 월의 할부 결제 목록
+  const getInstallmentsForMonth = useCallback((yearMonth: string) => {
+    const [viewYear, viewMonth] = yearMonth.split('-').map(Number);
+
+    return installments
+      .map((inst) => {
+        const [startYear, startMonth] = inst.startDate.split('-').map(Number);
+        const paymentNumber = (viewYear - startYear) * 12 + (viewMonth - startMonth) + 1;
+
+        if (paymentNumber < 1 || paymentNumber > inst.totalMonths) return null;
+
+        const remainingMonths = inst.totalMonths - paymentNumber;
+        return {
+          ...inst,
+          paymentNumber,
+          remainingMonths,
+          remainingAmount: remainingMonths * inst.monthlyAmount,
+          isLastPayment: paymentNumber === inst.totalMonths,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [installments]);
+
   // 이번 달 총 할부금
   const getMonthlyInstallmentTotal = useCallback(() => {
     return installments
@@ -361,18 +427,22 @@ export function useFinanceData() {
       .reduce((sum, inst) => sum + inst.monthlyAmount, 0);
   }, [installments]);
 
-  // 총 자산 계산 (자산 - 대출)
+  // 총 자산 계산 (자산 - 대출 - 할부잔여)
   const getTotalNetWorth = useCallback(() => {
     const totalAssets = assets.reduce((sum, a) => sum + a.amount, 0);
     const totalInvestment = portfolio.reduce((sum, h) => sum + h.currentPrice * h.quantity, 0);
     const totalLoans = loans.reduce((sum, l) => sum + l.remainingBalance, 0);
+    const installmentDebt = installments
+      .filter((i) => i.paidMonths < i.totalMonths)
+      .reduce((sum, i) => sum + (i.totalMonths - i.paidMonths) * i.monthlyAmount, 0);
     return {
       totalAssets,
       totalInvestment,
       totalLoans,
-      netWorth: totalAssets + totalInvestment - totalLoans,
+      installmentDebt,
+      netWorth: totalAssets + totalInvestment - totalLoans - installmentDebt,
     };
-  }, [assets, portfolio, loans]);
+  }, [assets, portfolio, loans, installments]);
 
   // Summary calculations
   const getSummary = useCallback(() => {
@@ -423,8 +493,7 @@ export function useFinanceData() {
     // State
     isLoading,
     error,
-    useSheetsApi,
-    isAuthorized,
+    isConnected,
     transactions,
     stockTrades,
     portfolio,
@@ -432,21 +501,14 @@ export function useFinanceData() {
     assets,
     loans,
     installments,
-    sheetsConfig,
-
-    // Setters
-    setUseSheetsApi,
-    setSheetsConfig,
+    cards,
 
     // Operations
-    initializeSheets,
-    authorizeSheets,
     addTransaction,
     deleteTransaction,
     addStockTrade,
     deleteStockTrade,
     refreshPrices,
-    syncWithSheets,
     getDropAlerts,
     getSummary,
     // Asset operations
@@ -457,11 +519,16 @@ export function useFinanceData() {
     addLoan,
     updateLoan,
     deleteLoan,
+    // Card operations
+    addCard,
+    updateCard,
+    deleteCard,
     // Installment operations
     addInstallment,
     updateInstallment,
     deleteInstallment,
     getUpcomingInstallments,
+    getInstallmentsForMonth,
     getMonthlyInstallmentTotal,
     getTotalNetWorth,
   };
