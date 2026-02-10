@@ -1,3 +1,13 @@
+export interface MarketIndicator {
+  symbol: string;
+  label: string;
+  unit: string;
+  price: number;
+  prevClose: number;
+  change: number;
+  changePercent: number;
+}
+
 interface YahooQuote {
   symbol: string;
   regularMarketPrice: number;
@@ -10,7 +20,7 @@ interface YahooQuote {
 interface YahooChartResult {
   meta: {
     regularMarketPrice: number;
-    previousClose: number;
+    chartPreviousClose: number;
     fiftyTwoWeekHigh: number;
     fiftyTwoWeekLow: number;
   };
@@ -54,12 +64,13 @@ export class YahooFinanceService {
 
       if (!result) return null;
 
+      const price = result.meta.regularMarketPrice;
       return {
         symbol: formattedCode,
-        regularMarketPrice: result.meta.regularMarketPrice,
-        regularMarketPreviousClose: result.meta.previousClose,
-        fiftyTwoWeekHigh: result.meta.fiftyTwoWeekHigh,
-        fiftyTwoWeekLow: result.meta.fiftyTwoWeekLow,
+        regularMarketPrice: price,
+        regularMarketPreviousClose: result.meta.chartPreviousClose ?? price,
+        fiftyTwoWeekHigh: result.meta.fiftyTwoWeekHigh ?? price,
+        fiftyTwoWeekLow: result.meta.fiftyTwoWeekLow ?? price,
         shortName: formattedCode,
       };
     } catch (err) {
@@ -129,6 +140,73 @@ export class YahooFinanceService {
   // Check if drop exceeds threshold (default -10%)
   isAlertTriggered(dropPercent: number, threshold: number = -10): boolean {
     return dropPercent <= threshold;
+  }
+
+  // 시장 지표 조회 (코스피, 나스닥, 환율, 금)
+  async getMarketIndicators(): Promise<MarketIndicator[]> {
+    const TROY_OZ_TO_GRAM = 31.1035;
+
+    const symbols: { symbol: string; label: string; unit: string; multiplier: number }[] = [
+      { symbol: '^KS11', label: '코스피', unit: '', multiplier: 1 },
+      { symbol: '^IXIC', label: '나스닥', unit: '', multiplier: 1 },
+      { symbol: 'USDKRW=X', label: 'USD/KRW', unit: '원', multiplier: 1 },
+      { symbol: 'JPYKRW=X', label: 'JPY100/KRW', unit: '원', multiplier: 100 },
+    ];
+
+    // 금 시세는 별도 처리 (USD/oz → KRW/g 변환 필요)
+    const goldSymbol = 'GC=F';
+
+    const rawQuotes = new Map<string, YahooQuote>();
+
+    const allSymbols = [...symbols.map(s => s.symbol), goldSymbol];
+    const promises = allSymbols.map(async (symbol) => {
+      const quote = await this.getQuote(symbol);
+      if (quote) rawQuotes.set(symbol, quote);
+    });
+
+    await Promise.all(promises);
+
+    // 기본 지표 계산
+    const results: MarketIndicator[] = [];
+    for (const { symbol, label, unit, multiplier } of symbols) {
+      const quote = rawQuotes.get(symbol);
+      if (quote) {
+        const price = quote.regularMarketPrice * multiplier;
+        const prevClose = quote.regularMarketPreviousClose * multiplier;
+        const change = price - prevClose;
+        const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+        results.push({ symbol, label, unit, price, prevClose, change, changePercent });
+      }
+    }
+
+    // 금 시세: USD/oz → KRW/g 변환
+    const goldQuote = rawQuotes.get(goldSymbol);
+    const usdkrwQuote = rawQuotes.get('USDKRW=X');
+    if (goldQuote && usdkrwQuote) {
+      const usdkrw = usdkrwQuote.regularMarketPrice;
+      const usdkrwPrev = usdkrwQuote.regularMarketPreviousClose;
+
+      const goldKrwPerGram = (goldQuote.regularMarketPrice * usdkrw) / TROY_OZ_TO_GRAM;
+      const goldKrwPrevClose = (goldQuote.regularMarketPreviousClose * usdkrwPrev) / TROY_OZ_TO_GRAM;
+      const goldChange = goldKrwPerGram - goldKrwPrevClose;
+      const goldChangePercent = goldKrwPrevClose > 0 ? (goldChange / goldKrwPrevClose) * 100 : 0;
+
+      results.push({
+        symbol: 'GOLD_KRW',
+        label: '금(KRX)',
+        unit: '원/g',
+        price: Math.round(goldKrwPerGram),
+        prevClose: Math.round(goldKrwPrevClose),
+        change: Math.round(goldChange),
+        changePercent: goldChangePercent,
+      });
+    }
+
+    // 표시 순서: 코스피, 나스닥, USD/KRW, JPY100/KRW, 금
+    const displayOrder = [...symbols.map(s => s.symbol), 'GOLD_KRW'];
+    return displayOrder
+      .map(s => results.find(r => r.symbol === s))
+      .filter((r): r is MarketIndicator => r !== null && r !== undefined);
   }
 }
 

@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react';
 import { useFinance } from '../context/FinanceContext';
 import { formatKRW, formatPercent, getValueColor } from '../utils/format';
+import { yahooFinanceService, type MarketIndicator } from '../services/yahooFinance';
 import {
   LineChart,
   Line,
@@ -15,10 +17,44 @@ import {
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
+function formatIndicatorPrice(indicator: MarketIndicator): string {
+  if (indicator.symbol === 'GOLD_KRW') {
+    // 금: 정수 + 원/g
+    return `${indicator.price.toLocaleString('ko-KR')}${indicator.unit}`;
+  }
+  if (indicator.symbol.includes('KRW')) {
+    // 환율: 소수점 2자리 + 원
+    return `${indicator.price.toFixed(2)}${indicator.unit}`;
+  }
+  // 지수: 소수점 2자리
+  return indicator.price.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 export function Dashboard() {
   const { getSummary, transactions, portfolio, getDropAlerts, refreshPrices, isLoading } = useFinance();
   const summary = getSummary();
   const alerts = getDropAlerts();
+
+  // 시장 지표
+  const [marketData, setMarketData] = useState<MarketIndicator[]>([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchMarket = async () => {
+      setMarketLoading(true);
+      try {
+        const data = await yahooFinanceService.getMarketIndicators();
+        if (!cancelled) setMarketData(data);
+      } catch {
+        // 실패 시 빈 상태 유지
+      } finally {
+        if (!cancelled) setMarketLoading(false);
+      }
+    };
+    fetchMarket();
+    return () => { cancelled = true; };
+  }, []);
 
   // Prepare expense by category data for pie chart
   const currentMonth = new Date().getMonth();
@@ -51,6 +87,30 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Market Indicators */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {marketLoading ? (
+          <div className="col-span-full text-center text-sm text-gray-400 py-3">시장 지표 로딩 중...</div>
+        ) : marketData.length > 0 ? (
+          marketData.map((ind) => (
+            <div key={ind.symbol} className="bg-white rounded-lg shadow px-4 py-3 border border-gray-200">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-gray-500">{ind.label}</span>
+                <span className={`text-xs font-medium ${ind.change >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                  {ind.change >= 0 ? '+' : ''}{ind.changePercent.toFixed(2)}%
+                </span>
+              </div>
+              <div className="flex items-end justify-between mt-1">
+                <span className="text-lg font-bold">{formatIndicatorPrice(ind)}</span>
+                <span className={`text-xs ${ind.change >= 0 ? 'text-red-500' : 'text-blue-500'}`}>
+                  {ind.change >= 0 ? '+' : ''}{ind.symbol === 'GOLD_KRW' ? ind.change.toLocaleString('ko-KR') : ind.change.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          ))
+        ) : null}
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white rounded-lg shadow p-6 border border-gray-200">
@@ -86,7 +146,7 @@ export function Dashboard() {
       {alerts.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <h3 className="text-lg font-semibold text-red-800 mb-3">
-            ⚠️ 고점 대비 -10% 이상 하락 종목
+            고점 대비 -10% 이상 하락 종목
           </h3>
           <div className="space-y-2">
             {alerts.map((holding) => (
