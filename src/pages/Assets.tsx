@@ -3,22 +3,25 @@ import { useFinance } from '../context/FinanceContext';
 import { Modal } from '../components/common/Modal';
 import { formatKRW, formatDateInput, getValueColor } from '../utils/format';
 import { ASSET_TYPES, LOAN_TYPES, CARD_LIST } from '../types';
-import type { Asset, Loan } from '../types';
+import type { Asset, Loan, Card } from '../types';
 
-type TabType = 'assets' | 'loans' | 'installments';
+type TabType = 'assets' | 'loans' | 'cards' | 'installments';
 
 export function Assets() {
   const {
     assets,
     loans,
     installments,
+    cards,
     addAsset,
     updateAsset,
     deleteAsset,
     addLoan,
     updateLoan,
     deleteLoan,
-    addInstallment,
+    addCard,
+    updateCard,
+    deleteCard,
     deleteInstallment,
     getUpcomingInstallments,
     getMonthlyInstallmentTotal,
@@ -28,9 +31,10 @@ export function Assets() {
   const [activeTab, setActiveTab] = useState<TabType>('assets');
   const [isAssetModalOpen, setIsAssetModalOpen] = useState(false);
   const [isLoanModalOpen, setIsLoanModalOpen] = useState(false);
-  const [isInstallmentModalOpen, setIsInstallmentModalOpen] = useState(false);
+  const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
+  const [editingCard, setEditingCard] = useState<Card | null>(null);
 
   const netWorth = getTotalNetWorth();
   const upcomingInstallments = getUpcomingInstallments();
@@ -59,14 +63,13 @@ export function Assets() {
     memo: '',
   });
 
-  // Installment form
-  const [installmentForm, setInstallmentForm] = useState({
-    itemName: '',
-    cardName: CARD_LIST[0] as string,
-    totalAmount: '',
-    totalMonths: '',
-    startDate: formatDateInput(),
-    paymentDay: '15',
+  // Card form
+  const [cardForm, setCardForm] = useState({
+    name: '',
+    company: CARD_LIST[0] as string,
+    type: 'credit' as Card['type'],
+    billingDay: '15',
+    linkedAssetId: '',
     memo: '',
   });
 
@@ -159,39 +162,55 @@ export function Assets() {
     setIsLoanModalOpen(true);
   };
 
-  const handleAddInstallment = async () => {
-    const totalAmount = parseFloat(installmentForm.totalAmount) || 0;
-    const totalMonths = parseInt(installmentForm.totalMonths) || 1;
-    const monthlyAmount = Math.round(totalAmount / totalMonths);
+  const handleAddCard = () => {
+    if (editingCard) {
+      updateCard(editingCard.id, {
+        name: cardForm.name,
+        company: cardForm.company,
+        type: cardForm.type,
+        billingDay: cardForm.type === 'credit' ? (parseInt(cardForm.billingDay) || 15) : undefined,
+        linkedAssetId: cardForm.linkedAssetId || undefined,
+        memo: cardForm.memo,
+      });
+    } else {
+      addCard({
+        name: cardForm.name,
+        company: cardForm.company,
+        type: cardForm.type,
+        billingDay: cardForm.type === 'credit' ? (parseInt(cardForm.billingDay) || 15) : undefined,
+        linkedAssetId: cardForm.linkedAssetId || undefined,
+        memo: cardForm.memo,
+      });
+    }
+    setIsCardModalOpen(false);
+    setEditingCard(null);
+    setCardForm({ name: '', company: CARD_LIST[0], type: 'credit', billingDay: '15', linkedAssetId: '', memo: '' });
+  };
 
-    await addInstallment({
-      itemName: installmentForm.itemName,
-      cardName: installmentForm.cardName,
-      totalAmount,
-      monthlyAmount,
-      totalMonths,
-      startDate: installmentForm.startDate,
-      paymentDay: parseInt(installmentForm.paymentDay) || 15,
-      memo: installmentForm.memo,
+  const handleEditCard = (card: Card) => {
+    setEditingCard(card);
+    setCardForm({
+      name: card.name,
+      company: card.company,
+      type: card.type,
+      billingDay: card.billingDay?.toString() || '15',
+      linkedAssetId: card.linkedAssetId || '',
+      memo: card.memo,
     });
-
-    setIsInstallmentModalOpen(false);
-    setInstallmentForm({
-      itemName: '', cardName: CARD_LIST[0], totalAmount: '',
-      totalMonths: '', startDate: formatDateInput(), paymentDay: '15', memo: '',
-    });
+    setIsCardModalOpen(true);
   };
 
   const tabs = [
     { id: 'assets' as TabType, label: '자산', count: assets.length },
     { id: 'loans' as TabType, label: '대출', count: loans.length },
+    { id: 'cards' as TabType, label: '카드', count: cards.length },
     { id: 'installments' as TabType, label: '할부', count: installments.filter(i => i.paidMonths < i.totalMonths).length },
   ];
 
   return (
     <div className="space-y-6">
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="bg-white rounded-lg shadow p-4 border border-gray-200">
           <h3 className="text-sm font-medium text-gray-500">총 자산</h3>
           <p className="mt-1 text-xl font-bold text-blue-600">
@@ -202,6 +221,12 @@ export function Assets() {
           <h3 className="text-sm font-medium text-gray-500">총 대출</h3>
           <p className="mt-1 text-xl font-bold text-red-600">
             {formatKRW(netWorth.totalLoans)}
+          </p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4 border border-gray-200">
+          <h3 className="text-sm font-medium text-gray-500">할부 잔여</h3>
+          <p className="mt-1 text-xl font-bold text-orange-600">
+            {formatKRW(netWorth.installmentDebt)}
           </p>
         </div>
         <div className="bg-white rounded-lg shadow p-4 border border-gray-200">
@@ -385,18 +410,77 @@ export function Assets() {
         </div>
       )}
 
-      {/* Installments Tab */}
-      {activeTab === 'installments' && (
+      {/* Cards Tab */}
+      {activeTab === 'cards' && (
         <div className="space-y-4">
           <div className="flex justify-end">
             <button
-              onClick={() => setIsInstallmentModalOpen(true)}
+              onClick={() => {
+                setEditingCard(null);
+                setCardForm({ name: '', company: CARD_LIST[0], type: 'credit', billingDay: '15', linkedAssetId: '', memo: '' });
+                setIsCardModalOpen(true);
+              }}
               className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
             >
-              + 할부 등록
+              + 카드 등록
             </button>
           </div>
 
+          <div className="bg-white rounded-lg shadow border border-gray-200">
+            {cards.length > 0 ? (
+              <div className="divide-y divide-gray-200">
+                {cards.map((card) => {
+                  const linkedAsset = assets.find((a) => a.id === card.linkedAssetId);
+                  return (
+                    <div key={card.id} className="p-4 hover:bg-gray-50">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 text-xs rounded ${
+                              card.type === 'credit'
+                                ? 'bg-purple-100 text-purple-700'
+                                : 'bg-teal-100 text-teal-700'
+                            }`}>
+                              {card.type === 'credit' ? '신용' : '체크'}
+                            </span>
+                            <span className="font-medium">{card.name}</span>
+                          </div>
+                          <p className="text-sm text-gray-500 mt-1">
+                            {card.company}
+                            {card.type === 'credit' && card.billingDay && ` · 매월 ${card.billingDay}일 결제`}
+                            {linkedAsset && ` · ${linkedAsset.name}`}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditCard(card)}
+                            className="text-gray-400 hover:text-blue-500 text-sm"
+                          >
+                            수정
+                          </button>
+                          <button
+                            onClick={() => deleteCard(card.id)}
+                            className="text-gray-400 hover:text-red-500 text-sm"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-8 text-center text-gray-500">등록된 카드가 없습니다.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Installments Tab */}
+      {activeTab === 'installments' && (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">가계부에서 신용카드 할부 결제 시 자동으로 등록됩니다.</p>
           <div className="bg-white rounded-lg shadow border border-gray-200">
             {installments.length > 0 ? (
               <div className="divide-y divide-gray-200">
@@ -642,107 +726,111 @@ export function Assets() {
         </div>
       </Modal>
 
-      {/* Installment Modal */}
+      {/* Card Modal */}
       <Modal
-        isOpen={isInstallmentModalOpen}
-        onClose={() => setIsInstallmentModalOpen(false)}
-        title="할부 등록"
+        isOpen={isCardModalOpen}
+        onClose={() => setIsCardModalOpen(false)}
+        title={editingCard ? '카드 수정' : '카드 등록'}
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">품목명</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">카드명</label>
             <input
               type="text"
-              value={installmentForm.itemName}
-              onChange={(e) => setInstallmentForm({ ...installmentForm, itemName: e.target.value })}
-              placeholder="예: 노트북"
+              value={cardForm.name}
+              onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })}
+              placeholder="예: 신한 Deep On"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">카드</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">카드사</label>
             <select
-              value={installmentForm.cardName}
-              onChange={(e) => setInstallmentForm({ ...installmentForm, cardName: e.target.value })}
+              value={cardForm.company}
+              onChange={(e) => setCardForm({ ...cardForm, company: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {CARD_LIST.map((card) => (
-                <option key={card} value={card}>{card}</option>
+              {CARD_LIST.map((company) => (
+                <option key={company} value={company}>{company}</option>
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">총 금액</label>
-              <input
-                type="number"
-                value={installmentForm.totalAmount}
-                onChange={(e) => setInstallmentForm({ ...installmentForm, totalAmount: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">할부 개월</label>
-              <input
-                type="number"
-                value={installmentForm.totalMonths}
-                onChange={(e) => setInstallmentForm({ ...installmentForm, totalMonths: e.target.value })}
-                placeholder="12"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">카드 유형</label>
+            <div className="flex gap-4">
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="credit"
+                  checked={cardForm.type === 'credit'}
+                  onChange={(e) => setCardForm({ ...cardForm, type: e.target.value as Card['type'] })}
+                  className="mr-2"
+                />
+                신용카드
+              </label>
+              <label className="flex items-center">
+                <input
+                  type="radio"
+                  value="debit"
+                  checked={cardForm.type === 'debit'}
+                  onChange={(e) => setCardForm({ ...cardForm, type: e.target.value as Card['type'] })}
+                  className="mr-2"
+                />
+                체크카드
+              </label>
             </div>
           </div>
-          {installmentForm.totalAmount && installmentForm.totalMonths && (
-            <div className="p-3 bg-gray-50 rounded-lg text-sm">
-              월 납입액: <strong>{formatKRW(Math.round(parseFloat(installmentForm.totalAmount) / parseInt(installmentForm.totalMonths)))}</strong>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-4">
+          {cardForm.type === 'credit' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">첫 결제일</label>
-              <input
-                type="date"
-                value={installmentForm.startDate}
-                onChange={(e) => setInstallmentForm({ ...installmentForm, startDate: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">매월 결제일</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">결제일</label>
               <input
                 type="number"
                 min="1"
                 max="31"
-                value={installmentForm.paymentDay}
-                onChange={(e) => setInstallmentForm({ ...installmentForm, paymentDay: e.target.value })}
+                value={cardForm.billingDay}
+                onChange={(e) => setCardForm({ ...cardForm, billingDay: e.target.value })}
+                placeholder="15"
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">결제 계좌 (선택)</label>
+            <select
+              value={cardForm.linkedAssetId}
+              onChange={(e) => setCardForm({ ...cardForm, linkedAssetId: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">선택 안함</option>
+              {assets
+                .filter((a) => a.type === 'cash' || a.type === 'savings')
+                .map((a) => (
+                  <option key={a.id} value={a.id}>{a.name} ({a.institution || ''})</option>
+                ))
+              }
+            </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">메모</label>
             <input
               type="text"
-              value={installmentForm.memo}
-              onChange={(e) => setInstallmentForm({ ...installmentForm, memo: e.target.value })}
+              value={cardForm.memo}
+              onChange={(e) => setCardForm({ ...cardForm, memo: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
-            첫 결제일에 가계부 지출로 자동 등록됩니다.
-          </div>
           <div className="flex gap-3 pt-4">
             <button
-              onClick={() => setIsInstallmentModalOpen(false)}
+              onClick={() => setIsCardModalOpen(false)}
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
             >
               취소
             </button>
             <button
-              onClick={handleAddInstallment}
+              onClick={handleAddCard}
               className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
             >
-              등록
+              {editingCard ? '수정' : '등록'}
             </button>
           </div>
         </div>

@@ -6,7 +6,9 @@ export interface Transaction {
   category: string;
   amount: number;
   memo: string;
-  // 할부 연결 (할부 첫 결제 시)
+  // 결제수단 (지출일 때만)
+  paymentMethod?: 'cash' | 'card';
+  cardId?: string;
   installmentId?: string;
 }
 
@@ -36,11 +38,24 @@ export interface Loan {
   memo: string;
 }
 
+// 카드 등록
+export interface Card {
+  id: string;
+  name: string; // "신한 Deep On", "국민 My WE:SH"
+  company: string; // 카드사 (CARD_LIST에서 선택)
+  type: 'debit' | 'credit';
+  billingDay?: number; // 결제일 (신용카드만, 1-31)
+  linkedAssetId?: string; // 결제 출금 계좌 (Asset ID)
+  memo: string;
+}
+
 // 카드 할부
 export interface Installment {
   id: string;
   itemName: string; // 품목명
-  cardName: string; // 카드사/카드명
+  cardId: string; // 등록된 카드 ID
+  cardName: string; // 카드명 (표시용)
+  category: string; // 지출 카테고리
   totalAmount: number; // 총 금액
   monthlyAmount: number; // 월 납입액
   totalMonths: number; // 총 할부 개월
@@ -91,7 +106,6 @@ export const EXPENSE_CATEGORIES = [
   '문화/여가',
   '의료/건강',
   '교육',
-  '할부',
   '기타'
 ] as const;
 
@@ -129,9 +143,3 @@ export const CARD_LIST = [
   '기타',
 ] as const;
 
-// Google Sheets config
-export interface SheetsConfig {
-  spreadsheetId: string;
-  apiKey: string;
-  clientId: string;
-}
