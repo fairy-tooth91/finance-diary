@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useFinance } from '../../context/FinanceContext';
+import { useAuth } from '../../context/AuthContext';
 
 interface LayoutProps {
   children: ReactNode;
@@ -18,6 +19,7 @@ const navItems = [
 export function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const { getDropAlerts } = useFinance();
+  const { user, logout } = useAuth();
   const alerts = getDropAlerts();
 
   return (
@@ -27,12 +29,25 @@ export function Layout({ children }: LayoutProps) {
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <h1 className="text-xl font-bold text-gray-900">Finance Diary</h1>
-            {alerts.length > 0 && (
-              <div className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm">
-                <span>⚠️</span>
-                <span>{alerts.length}개 종목 -10% 이상 하락</span>
-              </div>
-            )}
+            <div className="flex items-center gap-3">
+              {alerts.length > 0 && (
+                <div className="flex items-center gap-2 bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm">
+                  <span>⚠️</span>
+                  <span>{alerts.length}개 종목 -10% 이상 하락</span>
+                </div>
+              )}
+              {user && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-600">{user.name}</span>
+                  <button
+                    onClick={logout}
+                    className="text-sm text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    로그아웃
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>

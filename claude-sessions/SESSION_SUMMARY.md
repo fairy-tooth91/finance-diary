@@ -6,8 +6,8 @@
 - **이름**: Finance Diary (개인 재무관리 앱)
 - **위치**: `/root/Workspace/playground/finance-diary`
 - **GitHub**: https://github.com/fairy-tooth91/finance-diary
-- **배포 URL**: https://fairy-tooth91.github.io/finance-diary/
-- **브랜치**: `develop` (작업), `master` (안정), `gh-pages` (배포)
+- **배포 URL**: https://finance-diary.vercel.app (Vercel 배포 후 확정)
+- **브랜치**: `develop` (작업), `master` (안정/Vercel 자동 배포)
 - **Supabase**: `afypqjipbjjdmzevsxow.supabase.co` (public 스키마)
 
 ### 기술 스택
@@ -15,8 +15,14 @@
 - Tailwind CSS
 - Recharts (차트)
 - Yahoo Finance API (주가 + 시장 지표)
-- Supabase (PostgreSQL 클라우드 DB)
-- GitHub Pages (배포)
+- Supabase (PostgreSQL 클라우드 DB + Auth)
+- Vercel (배포)
+
+### 아키텍처
+- **Service 패턴**: `services/` 폴더가 Supabase 의존성을 캡슐화
+- 도메인별 독립 파일 (transactions, assets, loans, cards 등)
+- 인증: Supabase Auth (Google, Kakao, Naver 소셜 로그인)
+- 흐름: Pages → FinanceContext → useFinanceData → services/*.ts → Supabase
 
 ### 구현 완료 기능
 | 페이지 | 기능 | 상태 |
@@ -50,20 +56,25 @@
 ### 할부 로직 재검토 필요
 - 이전 세션에서 사용자 피드백 있었음
 
-### Supabase 테이블 생성
-- 사용자가 SQL Editor에서 `db/init/` 파일 순서대로 실행 필요
+### Vercel 실배포
+- Vercel에 Supabase 환경변수 설정 필요 (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`)
 
 ### 향후 고려사항 (Phase 2)
 - 카드 결제일 도래 시 연결계좌 자동 차감
 - 월별 카드 명세서 뷰
 - PWA 변환
+- 투자 일기 기능 강화 (매매 복기, 감정 태그)
+- 자체 백엔드(Go) 전환 시 services/ 내부를 fetch() 호출로 교체
 
 ## 📁 **문서 위치**
 - `CLAUDE.md` - 현재 구현 현황 (프로젝트 루트)
-- `doc/v0.1.md` - 최초 요구사항
+- `docs/architecture.md` - 전체 아키텍처 + 데이터 흐름도
+- `docs/api-spec.md` - 데이터 계약 (엔티티, 서비스 함수)
+- `docs/adr/` - Architecture Decision Records (4건)
 - `db/init/` - DB 스키마 SQL 파일 (실행 순서: 1→2→3)
 
 ## 🔗 **세션 기록**
 - [HISTORY_feature_001.md](./HISTORY_feature_001.md) - 초기 구현 (2026-02-02)
 - [HISTORY_feature_002.md](./HISTORY_feature_002.md) - Supabase + 카드/할부 + 시장 지표 (2026-02-10)
+- [HISTORY_feature_003.md](./HISTORY_feature_003.md) - Vercel 마이그레이션 + 인증 + Service 패턴 전환 (2026-02-13)
 - [details/](./details/) - 상세 기록

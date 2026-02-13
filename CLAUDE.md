@@ -1,12 +1,15 @@
 # Finance Diary - 개인 재무관리 앱
 
+> **Personal Project** — 이 프로젝트는 개인 사이드 프로젝트이며, 소속 회사(Ncurion/업무)와 무관합니다.
+
 ## 프로젝트 개요
 
 가계부와 주식 투자 일기를 결합한 종합 재무관리 웹 앱
 
-- **배포 URL**: https://fairy-tooth91.github.io/finance-diary/
+- **배포 URL**: https://finance-diary.vercel.app (Vercel 배포 후 확정)
 - **GitHub**: https://github.com/fairy-tooth91/finance-diary
 - **Supabase**: `afypqjipbjjdmzevsxow.supabase.co` (public 스키마)
+- **호스팅**: Vercel
 
 ## 기술 스택
 
@@ -18,48 +21,111 @@
 | 주가 API | Yahoo Finance (CORS 프록시: allorigins.win) |
 | 시장 지표 | Yahoo Finance (코스피, 나스닥, 환율, 금) |
 | 데이터 저장 | Supabase (PostgreSQL) |
-| 배포 | GitHub Pages |
+| 인증 | Supabase Auth (Google, Kakao, Naver) |
+| 배포 | Vercel |
+
+## 아키텍처
+
+### Service 패턴
+
+`services/` 폴더가 Supabase를 포함한 모든 외부 의존성을 캡슐화한다.
+도메인별로 독립된 파일이 CRUD 함수를 직접 export하는 구조.
+
+```
+Pages → FinanceContext → useFinanceData → services/*.ts → Supabase
+```
+
+### Service 레이어 격리 규칙 (반드시 준수)
+
+1. **Supabase 클라이언트를 사용할 수 있는 파일은 `services/` 내부만 허용한다.**
+2. **Context, Hook, Component, Page, Utils에서는 절대 Supabase를 직접 import하지 않는다.**
+   - ❌ `import { supabase } from '../services/client'`
+   - ✅ `import { fetchTransactions } from '../services'`
+3. **snake_case ↔ camelCase 변환은 각 서비스 파일 내부 `toX()`/`fromX()` 함수에서만 처리한다.**
+4. **새로운 DB 조회/수정이 필요하면 해당 도메인 서비스 파일에 함수를 추가한다.**
+
+### 백엔드 교체 시나리오
+
+서비스가 커져서 자체 백엔드(Go 등)가 필요해지면, `services/` 내부 구현만 `fetch()` 호출로 교체:
+```
+현재: services/transactions.ts → supabase.from('transactions')...
+교체: services/transactions.ts → fetch('/api/transactions')
+```
+- 함수 시그니처(입출력 타입)는 동일하게 유지
+- Hook/Context/Page는 수정 불필요
 
 ## 폴더 구조
 
 ```
 src/
+├── services/                  # ★ 데이터/인증 계층 (Supabase 의존, 교체 대상)
+│   ├── client.ts              #   Supabase 클라이언트 초기화
+│   ├── auth.ts                #   인증 (소셜 로그인/로그아웃/세션)
+│   ├── transactions.ts        #   수입/지출 CRUD
+│   ├── assets.ts              #   자산 CRUD
+│   ├── loans.ts               #   대출 CRUD
+│   ├── cards.ts               #   카드 CRUD
+│   ├── installments.ts        #   할부 CRUD
+│   ├── stockTrades.ts         #   주식 매매 CRUD
+│   ├── portfolio.ts           #   포트폴리오 upsert/삭제
+│   ├── priceHistory.ts        #   가격 이력 upsert
+│   ├── connection.ts          #   DB 연결 테스트
+│   ├── yahooFinance.ts        #   Yahoo Finance API (시세 + 시장 지표)
+│   └── index.ts               #   re-export (단일 진입점)
 ├── components/
 │   └── common/
-│       ├── Layout.tsx        # 전체 레이아웃 + 네비게이션
-│       └── Modal.tsx         # 공통 모달 컴포넌트
+│       ├── Layout.tsx          #   헤더 + 6탭 네비게이션 + 로그아웃
+│       └── Modal.tsx           #   공통 모달 컴포넌트
 ├── context/
-│   └── FinanceContext.tsx    # 전역 상태 관리
+│   ├── AuthContext.tsx         #   인증 상태 관리
+│   └── FinanceContext.tsx      #   재무 데이터 상태 (useFinanceData 래핑)
 ├── hooks/
-│   ├── useFinanceData.ts     # 핵심 비즈니스 로직 (Supabase 연동)
-│   └── useLocalStorage.ts    # localStorage 훅 (캐시용)
+│   ├── useFinanceData.ts      #   비즈니스 로직 + CRUD (services 소비)
+│   └── useLocalStorage.ts     #   localStorage 훅 (캐시용)
 ├── pages/
-│   ├── Dashboard.tsx         # 대시보드 + 시장 지표
-│   ├── Transactions.tsx      # 가계부 + 결제수단 + 할부 현황
-│   ├── Assets.tsx            # 자산/대출/카드/할부
-│   ├── Stocks.tsx            # 주식매매 기록
-│   ├── Portfolio.tsx         # 포트폴리오 현황
-│   └── Settings.tsx          # Supabase 연결 상태
-├── services/
-│   ├── supabase.ts           # Supabase CRUD + snake_case↔camelCase 매핑
-│   └── yahooFinance.ts       # Yahoo Finance API + 시장 지표
+│   ├── Login.tsx              #   소셜 로그인 (Google, Kakao, Naver)
+│   ├── Dashboard.tsx          #   시장 지표 + 월별 요약 + 차트
+│   ├── Transactions.tsx       #   수입/지출 CRUD + 결제수단/할부
+│   ├── Assets.tsx             #   자산/대출/카드/할부 4탭
+│   ├── Stocks.tsx             #   매수/매도 기록 + 투자 일기
+│   ├── Portfolio.tsx          #   보유 종목 + 수익률 + 시세 차트
+│   └── Settings.tsx           #   연결 상태 + 캐시 관리
 ├── types/
-│   └── index.ts              # TypeScript 타입 정의
+│   └── index.ts               #   TypeScript 인터페이스 + 상수
 └── utils/
-    └── format.ts             # 포맷팅 유틸리티
+    └── format.ts              #   통화/날짜 포맷 유틸리티
 
-db/
-└── init/                     # DB 스키마 SQL (실행 순서: 1→2→3)
-    ├── 1.tables.users.sql
-    ├── 2.tables.assets.sql
-    ├── 2.tables.cards.sql
-    ├── 2.tables.loans.sql
-    ├── 2.tables.portfolio.sql
-    ├── 2.tables.price_history.sql
-    ├── 2.tables.stock_trades.sql
-    ├── 3.tables.installments.sql
-    └── 3.tables.transactions.sql
+db/init/                       # DB 스키마 SQL (실행 순서: 1→2→3)
+docs/
+├── architecture.md            # 전체 아키텍처 + 데이터 흐름도
+├── api-spec.md                # 데이터 계약 (엔티티, 서비스 함수)
+└── adr/                       # Architecture Decision Records
+    ├── 001-supabase-direct.md
+    ├── 002-repository-pattern.md  → 003에 의해 대체됨
+    ├── 003-auth-supabase-first.md
+    └── 004-service-pattern.md
 ```
+
+## 코딩 컨벤션
+
+### DB ↔ TypeScript 매핑
+- **DB**: snake_case (`payment_method`, `card_id`, `billing_day`)
+- **TypeScript**: camelCase (`paymentMethod`, `cardId`, `billingDay`)
+- 각 서비스 파일 내부 `toX()`/`fromX()` 매핑 함수로 변환 (export하지 않음)
+
+### 환경 변수
+- `.env` 파일에 Supabase 키 보관 (소스코드에 하드코딩 금지)
+- Vite 환경 변수: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+- 접근: `import.meta.env.VITE_SUPABASE_URL`
+
+### 데이터 스코프
+- finance-diary: `user_id` 기준 (개인 앱)
+- 모든 데이터는 `user_id`로 필터링
+- 서비스 함수 첫 번째 인자로 `userId` 전달
+
+### Optimistic UI
+- UI 즉시 업데이트 → Supabase 백그라운드 동기화
+- 실패 시 롤백 + 에러 표시
 
 ## 구현된 기능
 
@@ -149,9 +215,8 @@ interface Installment {
 
 ## 브랜치 전략
 
-- `master`: 안정 버전
+- `master`: 안정 버전 (Vercel 자동 배포)
 - `develop`: 개발 브랜치 (현재 작업 중)
-- `gh-pages`: GitHub Pages 배포 브랜치 (자동 생성)
 
 ## 명령어
 
@@ -159,7 +224,6 @@ interface Installment {
 npm run dev       # 개발 서버
 npm run build     # 프로덕션 빌드
 npm run test      # 테스트 실행
-npx gh-pages -d dist  # GitHub Pages 배포
 ```
 
 ## TODO
@@ -167,3 +231,8 @@ npx gh-pages -d dist  # GitHub Pages 배포
 - [ ] 할부 로직 재검토
 - [ ] Phase 2: 카드 결제일 자동 차감, 월별 카드 명세서 뷰
 - [ ] PWA 변환 검토
+- [ ] 자체 백엔드(Go) 전환 시 services/ 내부를 fetch() 호출로 교체
+- [x] 인증 시스템 도입 (Supabase Auth: Google/Kakao/Naver)
+- [x] Vercel 배포 마이그레이션
+- [ ] 투자 일기 기능 강화 (매매 복기, 감정 태그)
+- [ ] Vercel에 Supabase 환경변수 설정 + 실배포

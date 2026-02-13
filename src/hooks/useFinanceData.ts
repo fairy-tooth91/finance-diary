@@ -1,17 +1,28 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { Transaction, StockTrade, PortfolioHolding, PriceHistory, Asset, Loan, Installment, Card } from '../types';
-import { supabaseService } from '../services/supabase';
-import { yahooFinanceService } from '../services/yahooFinance';
+import {
+  fetchTransactions, createTransaction, deleteTransaction as deleteTransactionSvc,
+  fetchAssets, createAsset as createAssetSvc, updateAsset as updateAssetSvc, deleteAsset as deleteAssetSvc,
+  fetchLoans, createLoan as createLoanSvc, updateLoan as updateLoanSvc, deleteLoan as deleteLoanSvc,
+  fetchCards, createCard as createCardSvc, updateCard as updateCardSvc, deleteCard as deleteCardSvc,
+  fetchInstallments, createInstallment as createInstallmentSvc, updateInstallment as updateInstallmentSvc, deleteInstallment as deleteInstallmentSvc,
+  fetchStockTrades, createStockTrade as createStockTradeSvc, deleteStockTrade as deleteStockTradeSvc,
+  fetchPortfolio, upsertPortfolio, deletePortfolioByStockCode,
+  fetchPriceHistory, upsertPriceHistory,
+  yahooFinanceService,
+} from '../services';
 
-// Generate unique ID
 const generateId = () => `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-export function useFinanceData() {
+const DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
+
+export function useFinanceData(userId?: string) {
+  const uid = useMemo(() => userId || DEFAULT_USER_ID, [userId]);
+
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
-  // State - fetched from Supabase on mount
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stockTrades, setStockTrades] = useState<StockTrade[]>([]);
   const [portfolio, setPortfolio] = useState<PortfolioHolding[]>([]);
@@ -21,21 +32,21 @@ export function useFinanceData() {
   const [installments, setInstallments] = useState<Installment[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
 
-  // Fetch all data from Supabase on mount
+  // Fetch all data on mount
   useEffect(() => {
     const loadData = async () => {
       setIsLoading(true);
       setError(null);
       try {
         const [txns, trades, port, prices, assts, lns, insts, crds] = await Promise.all([
-          supabaseService.getTransactions(),
-          supabaseService.getStockTrades(),
-          supabaseService.getPortfolio(),
-          supabaseService.getPriceHistory(),
-          supabaseService.getAssets(),
-          supabaseService.getLoans(),
-          supabaseService.getInstallments(),
-          supabaseService.getCards(),
+          fetchTransactions(uid),
+          fetchStockTrades(uid),
+          fetchPortfolio(uid),
+          fetchPriceHistory(uid),
+          fetchAssets(uid),
+          fetchLoans(uid),
+          fetchInstallments(uid),
+          fetchCards(uid),
         ]);
         setTransactions(txns);
         setStockTrades(trades);
@@ -47,7 +58,7 @@ export function useFinanceData() {
         setCards(crds);
         setIsConnected(true);
       } catch (err) {
-        console.error('Failed to load data from Supabase:', err);
+        console.error('Failed to load data:', err);
         setError('데이터 로딩에 실패했습니다. 인터넷 연결을 확인하세요.');
         setIsConnected(false);
       } finally {
@@ -55,33 +66,39 @@ export function useFinanceData() {
       }
     };
     loadData();
-  }, []);
+  }, [uid]);
 
+  // ============================================
   // Transaction operations
+  // ============================================
+
   const addTransaction = useCallback(async (transaction: Omit<Transaction, 'id'> & { installmentId?: string }) => {
     setError(null);
     try {
       const newTransaction: Transaction = { ...transaction, id: generateId() };
       setTransactions((prev) => [...prev, newTransaction]);
-      await supabaseService.addTransaction(newTransaction);
+      await createTransaction(uid, newTransaction);
       return true;
     } catch (err) {
       console.error('Failed to add transaction:', err);
       setError('거래 추가에 실패했습니다.');
       return false;
     }
-  }, []);
+  }, [uid]);
 
-  const deleteTransaction = useCallback(async (id: string) => {
+  const removeTransaction = useCallback(async (id: string) => {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
     try {
-      await supabaseService.deleteTransaction(id);
+      await deleteTransactionSvc(id);
     } catch (err) {
       console.error('Failed to delete transaction:', err);
     }
   }, []);
 
+  // ============================================
   // Stock trade operations
+  // ============================================
+
   const addStockTrade = useCallback(async (trade: Omit<StockTrade, 'id' | 'total'>) => {
     setError(null);
     try {
@@ -89,9 +106,8 @@ export function useFinanceData() {
       const fullTrade: StockTrade = { ...trade, total, id: generateId() };
 
       setStockTrades((prev) => [...prev, fullTrade]);
-      await supabaseService.addStockTrade(fullTrade);
+      await createStockTradeSvc(uid, fullTrade);
 
-      // Update portfolio
       updatePortfolioFromTrade(fullTrade);
 
       return true;
@@ -100,18 +116,21 @@ export function useFinanceData() {
       setError('주식 매매 추가에 실패했습니다.');
       return false;
     }
-  }, []);
+  }, [uid]);
 
-  const deleteStockTrade = useCallback(async (id: string) => {
+  const removeStockTrade = useCallback(async (id: string) => {
     setStockTrades((prev) => prev.filter((t) => t.id !== id));
     try {
-      await supabaseService.deleteStockTrade(id);
+      await deleteStockTradeSvc(id);
     } catch (err) {
       console.error('Failed to delete stock trade:', err);
     }
   }, []);
 
+  // ============================================
   // Portfolio operations
+  // ============================================
+
   const updatePortfolioFromTrade = useCallback((trade: StockTrade) => {
     setPortfolio((prev) => {
       const existingIndex = prev.findIndex((h) => h.stockCode === trade.stockCode);
@@ -146,15 +165,13 @@ export function useFinanceData() {
           ];
         }
       } else {
-        // Sell
         if (existingIndex >= 0) {
           const existing = prev[existingIndex];
           const newQuantity = existing.quantity - trade.quantity;
 
           if (newQuantity <= 0) {
             updated = prev.filter((_, i) => i !== existingIndex);
-            // Delete from Supabase
-            supabaseService.deletePortfolioHolding(trade.stockCode).catch(console.error);
+            deletePortfolioByStockCode(uid, trade.stockCode).catch(console.error);
             return updated;
           } else {
             updated = [...prev];
@@ -168,13 +185,11 @@ export function useFinanceData() {
         }
       }
 
-      // Sync updated portfolio to Supabase
-      supabaseService.upsertPortfolio(updated).catch(console.error);
+      upsertPortfolio(uid, updated).catch(console.error);
       return updated;
     });
-  }, []);
+  }, [uid]);
 
-  // Refresh prices from Yahoo Finance
   const refreshPrices = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -214,26 +229,27 @@ export function useFinanceData() {
           return [...filtered, ...newPriceHistory];
         });
 
-        // Sync to Supabase
-        await supabaseService.upsertPortfolio(updatedPortfolio);
-        await supabaseService.addPriceHistory(newPriceHistory);
+        await upsertPortfolio(uid, updatedPortfolio);
+        await upsertPriceHistory(uid, newPriceHistory);
       }
 
       return true;
-    } catch (err) {
+    } catch {
       setError('시세 갱신에 실패했습니다.');
       return false;
     } finally {
       setIsLoading(false);
     }
-  }, [portfolio]);
+  }, [portfolio, uid]);
 
-  // Get alerts for holdings dropping more than threshold
   const getDropAlerts = useCallback((threshold: number = -10) => {
     return portfolio.filter((h) => h.dropFromHigh <= threshold);
   }, [portfolio]);
 
+  // ============================================
   // Asset operations
+  // ============================================
+
   const addAsset = useCallback(async (asset: Omit<Asset, 'id' | 'updatedAt'>) => {
     const newAsset: Asset = {
       ...asset,
@@ -242,12 +258,12 @@ export function useFinanceData() {
     };
     setAssets((prev) => [...prev, newAsset]);
     try {
-      await supabaseService.addAsset(newAsset);
+      await createAssetSvc(uid, newAsset);
     } catch (err) {
       console.error('Failed to add asset:', err);
     }
     return true;
-  }, []);
+  }, [uid]);
 
   const updateAsset = useCallback(async (id: string, updates: Partial<Asset>) => {
     const updatesWithDate = { ...updates, updatedAt: new Date().toISOString().split('T')[0] };
@@ -255,7 +271,7 @@ export function useFinanceData() {
       prev.map((a) => (a.id === id ? { ...a, ...updatesWithDate } : a))
     );
     try {
-      await supabaseService.updateAsset(id, updatesWithDate);
+      await updateAssetSvc(id, updatesWithDate);
     } catch (err) {
       console.error('Failed to update asset:', err);
     }
@@ -264,28 +280,31 @@ export function useFinanceData() {
   const deleteAsset = useCallback(async (id: string) => {
     setAssets((prev) => prev.filter((a) => a.id !== id));
     try {
-      await supabaseService.deleteAsset(id);
+      await deleteAssetSvc(id);
     } catch (err) {
       console.error('Failed to delete asset:', err);
     }
   }, []);
 
+  // ============================================
   // Loan operations
+  // ============================================
+
   const addLoan = useCallback(async (loan: Omit<Loan, 'id'>) => {
     const newLoan: Loan = { ...loan, id: generateId() };
     setLoans((prev) => [...prev, newLoan]);
     try {
-      await supabaseService.addLoan(newLoan);
+      await createLoanSvc(uid, newLoan);
     } catch (err) {
       console.error('Failed to add loan:', err);
     }
     return true;
-  }, []);
+  }, [uid]);
 
   const updateLoan = useCallback(async (id: string, updates: Partial<Loan>) => {
     setLoans((prev) => prev.map((l) => (l.id === id ? { ...l, ...updates } : l)));
     try {
-      await supabaseService.updateLoan(id, updates);
+      await updateLoanSvc(id, updates);
     } catch (err) {
       console.error('Failed to update loan:', err);
     }
@@ -294,28 +313,31 @@ export function useFinanceData() {
   const deleteLoan = useCallback(async (id: string) => {
     setLoans((prev) => prev.filter((l) => l.id !== id));
     try {
-      await supabaseService.deleteLoan(id);
+      await deleteLoanSvc(id);
     } catch (err) {
       console.error('Failed to delete loan:', err);
     }
   }, []);
 
+  // ============================================
   // Card operations
+  // ============================================
+
   const addCard = useCallback(async (card: Omit<Card, 'id'>) => {
     const newCard: Card = { ...card, id: generateId() };
     setCards((prev) => [...prev, newCard]);
     try {
-      await supabaseService.addCard(newCard);
+      await createCardSvc(uid, newCard);
     } catch (err) {
       console.error('Failed to add card:', err);
     }
     return newCard;
-  }, []);
+  }, [uid]);
 
   const updateCard = useCallback(async (id: string, updates: Partial<Card>) => {
     setCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
     try {
-      await supabaseService.updateCard(id, updates);
+      await updateCardSvc(id, updates);
     } catch (err) {
       console.error('Failed to update card:', err);
     }
@@ -324,13 +346,16 @@ export function useFinanceData() {
   const deleteCard = useCallback(async (id: string) => {
     setCards((prev) => prev.filter((c) => c.id !== id));
     try {
-      await supabaseService.deleteCard(id);
+      await deleteCardSvc(id);
     } catch (err) {
       console.error('Failed to delete card:', err);
     }
   }, []);
 
+  // ============================================
   // Installment operations
+  // ============================================
+
   const addInstallment = useCallback(async (
     installment: Omit<Installment, 'id' | 'paidMonths'>
   ) => {
@@ -341,12 +366,11 @@ export function useFinanceData() {
     };
     setInstallments((prev) => [...prev, newInstallment]);
     try {
-      await supabaseService.addInstallment(newInstallment);
+      await createInstallmentSvc(uid, newInstallment);
     } catch (err) {
       console.error('Failed to add installment:', err);
     }
 
-    // 첫 결제를 가계부에 추가
     await addTransaction({
       date: installment.startDate,
       type: 'expense',
@@ -358,12 +382,12 @@ export function useFinanceData() {
       installmentId: newInstallment.id,
     });
     return true;
-  }, [addTransaction]);
+  }, [uid, addTransaction]);
 
   const updateInstallment = useCallback(async (id: string, updates: Partial<Installment>) => {
     setInstallments((prev) => prev.map((i) => (i.id === id ? { ...i, ...updates } : i)));
     try {
-      await supabaseService.updateInstallment(id, updates);
+      await updateInstallmentSvc(id, updates);
     } catch (err) {
       console.error('Failed to update installment:', err);
     }
@@ -372,13 +396,16 @@ export function useFinanceData() {
   const deleteInstallment = useCallback(async (id: string) => {
     setInstallments((prev) => prev.filter((i) => i.id !== id));
     try {
-      await supabaseService.deleteInstallment(id);
+      await deleteInstallmentSvc(id);
     } catch (err) {
       console.error('Failed to delete installment:', err);
     }
   }, []);
 
-  // 이번 달 결제 예정 할부 목록
+  // ============================================
+  // Computed values
+  // ============================================
+
   const getUpcomingInstallments = useCallback(() => {
     const today = new Date();
     const currentDay = today.getDate();
@@ -397,7 +424,6 @@ export function useFinanceData() {
       }));
   }, [installments]);
 
-  // 특정 월의 할부 결제 목록
   const getInstallmentsForMonth = useCallback((yearMonth: string) => {
     const [viewYear, viewMonth] = yearMonth.split('-').map(Number);
 
@@ -420,14 +446,12 @@ export function useFinanceData() {
       .filter((item): item is NonNullable<typeof item> => item !== null);
   }, [installments]);
 
-  // 이번 달 총 할부금
   const getMonthlyInstallmentTotal = useCallback(() => {
     return installments
       .filter((inst) => inst.paidMonths < inst.totalMonths)
       .reduce((sum, inst) => sum + inst.monthlyAmount, 0);
   }, [installments]);
 
-  // 총 자산 계산 (자산 - 대출 - 할부잔여)
   const getTotalNetWorth = useCallback(() => {
     const totalAssets = assets.reduce((sum, a) => sum + a.amount, 0);
     const totalInvestment = portfolio.reduce((sum, h) => sum + h.currentPrice * h.quantity, 0);
@@ -444,7 +468,6 @@ export function useFinanceData() {
     };
   }, [assets, portfolio, loans, installments]);
 
-  // Summary calculations
   const getSummary = useCallback(() => {
     const now = new Date();
     const currentMonth = now.getMonth();
@@ -505,25 +528,21 @@ export function useFinanceData() {
 
     // Operations
     addTransaction,
-    deleteTransaction,
+    deleteTransaction: removeTransaction,
     addStockTrade,
-    deleteStockTrade,
+    deleteStockTrade: removeStockTrade,
     refreshPrices,
     getDropAlerts,
     getSummary,
-    // Asset operations
     addAsset,
     updateAsset,
     deleteAsset,
-    // Loan operations
     addLoan,
     updateLoan,
     deleteLoan,
-    // Card operations
     addCard,
     updateCard,
     deleteCard,
-    // Installment operations
     addInstallment,
     updateInstallment,
     deleteInstallment,
